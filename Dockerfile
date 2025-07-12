@@ -2,6 +2,9 @@ FROM python:3.10-slim
 
 WORKDIR /app
 
+ENV HF_HOME=/tmp/huggingface
+ENV TORCH_HOME=/tmp/torch
+ENV SENTENCE_TRANSFORMERS_HOME=/tmp/sentencetransformers
 ENV PORT=8000
 
 COPY requirements.txt .
