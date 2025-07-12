@@ -1,0 +1,15 @@
+version: '3.8'
+
+services:
+  model-api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: projet_fil_rouge_api-model-api-1
+    environment:
+    - HOME=/tmp
+    ports:
+      - "9500:8000"
+    env_file:
+      - .env 
+    restart: unless-stopped
