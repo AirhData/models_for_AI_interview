@@ -1,35 +1,17 @@
-FROM python:3.11-slim AS builder
-
-ENV PYTHONUNBUFFERED=1 \
-    PIP_NO_CACHE_DIR=off \
-    PIP_DISABLE_PIP_VERSION_CHECK=on \
-    PIP_DEFAULT_TIMEOUT=100
-
-RUN pip install uv
+FROM python:3.10-slim
 
 WORKDIR /app
+
+ENV PORT=8000
 
 COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
 
-RUN uv pip install --system --no-cache -r requirements.txt
-
-FROM python:3.11-slim
-
-RUN addgroup --system app && adduser --system --group app
-
-WORKDIR /app
-
-COPY --from=builder /usr/local/lib/python3.11/site-packages /usr/local/lib/python3.11/site-packages
-COPY --from=builder /usr/local/bin /usr/local/bin
+RUN python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('all-MiniLM-L6-v2')" && \
+    python -c "from transformers import pipeline; pipeline('sentiment-analysis', model='astrosbd/french_emotion_camembert')" && \
+    python -c "from transformers import pipeline; pipeline('zero-shot-classification', model='joeddav/xlm-roberta-large-xnli')" && \
+    python -c "import spacy; spacy.cli.download('fr_core_news_sm')"
 
 COPY . .
 
-RUN mkdir uploads
-
-RUN chown -R app:app uploads
-
-USER app
-
-EXPOSE 8000
-
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "$PORT"]
