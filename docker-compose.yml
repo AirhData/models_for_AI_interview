@@ -12,7 +12,7 @@ services:
       - TEMP=/tmp
       - TMP=/tmp
     ports:
-      - "9500:8000"
+      - "9500:8080"
     env_file:
       - .env 
     restart: unless-stopped
