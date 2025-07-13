@@ -1,15 +1,8 @@
-#!/usr/bin/env python3
-"""
-Script de pré-chargement des modèles pour optimiser les cold starts
-Exécuté pendant le build du Docker pour télécharger et mettre en cache les modèles
-"""
-
 import os
 import sys
 import logging
 from pathlib import Path
 
-# Configuration du logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
@@ -19,8 +12,6 @@ def preload_transformers_models():
         from transformers import pipeline, AutoTokenizer, AutoModel
         
         logger.info("=== Pré-chargement des modèles Transformers ===")
-        
-        # Modèles utilisés dans votre application
         models_to_preload = [
             {
                 "name": "astrosbd/french_emotion_camembert",
@@ -37,19 +28,13 @@ def preload_transformers_models():
         for model_info in models_to_preload:
             try:
                 logger.info(f"Téléchargement: {model_info['name']} ({model_info['description']})")
-                
-                # Pré-chargement du tokenizer et du modèle
                 tokenizer = AutoTokenizer.from_pretrained(model_info["name"])
                 model = AutoModel.from_pretrained(model_info["name"])
-                
-                # Test du pipeline pour s'assurer que tout fonctionne
                 pipe = pipeline(model_info["task"], model=model_info["name"], device=-1)
-                
                 logger.info(f"✅ {model_info['name']} pré-chargé avec succès")
                 
             except Exception as e:
                 logger.error(f"❌ Erreur lors du pré-chargement de {model_info['name']}: {e}")
-                # Continue avec les autres modèles même si un échoue
                 continue
                 
     except ImportError as e:
@@ -62,19 +47,12 @@ def preload_sentence_transformers():
     """Pré-charge les modèles Sentence Transformers"""
     try:
         from sentence_transformers import SentenceTransformer
-        
         logger.info("=== Pré-chargement Sentence Transformers ===")
-        
         model_name = 'all-MiniLM-L6-v2'
         logger.info(f"Téléchargement: {model_name}")
-        
-        # Pré-chargement et test
         model = SentenceTransformer(model_name)
-        
-        # Test rapide pour valider
         test_sentence = "Test de fonctionnement"
         embedding = model.encode(test_sentence)
-        
         logger.info(f"✅ {model_name} pré-chargé avec succès (embedding shape: {embedding.shape})")
         return True
         
@@ -94,8 +72,6 @@ def preload_torch():
         logger.info(f"PyTorch version: {torch.__version__}")
         logger.info(f"CUDA disponible: {torch.cuda.is_available()}")
         logger.info(f"CPU threads: {torch.get_num_threads()}")
-        
-        # Test de création de tensor
         test_tensor = torch.randn(10, 10)
         logger.info("✅ PyTorch configuré correctement")
         
@@ -113,10 +89,8 @@ def verify_model_cache():
     if cache_path.exists():
         cached_models = list(cache_path.rglob("*"))
         logger.info(f"📁 Cache modèles: {len(cached_models)} fichiers dans {cache_dir}")
-        
-        # Affiche les modèles en cache
         model_dirs = [d for d in cache_path.iterdir() if d.is_dir()]
-        for model_dir in model_dirs[:5]:  # Limite à 5 pour éviter le spam
+        for model_dir in model_dirs[:5]: 
             logger.info(f"  - {model_dir.name}")
             
         return len(cached_models) > 0
@@ -130,8 +104,6 @@ def main():
     
     success_count = 0
     total_steps = 4
-    
-    # Étapes de pré-chargement
     steps = [
         ("PyTorch", preload_torch),
         ("Transformers", preload_transformers_models), 
@@ -149,11 +121,9 @@ def main():
                 logger.warning(f"⚠️ {step_name} terminé avec des avertissements")
         except Exception as e:
             logger.error(f"❌ Erreur critique dans {step_name}: {e}")
-    
-    # Résumé
     logger.info(f"\n🎯 Pré-chargement terminé: {success_count}/{total_steps} étapes réussies")
     
-    if success_count >= 2:  # Au moins PyTorch + un modèle
+    if success_count >= 2:  
         logger.info("✅ Pré-chargement suffisant pour fonctionner")
         return 0
     else:
