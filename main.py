@@ -21,45 +21,41 @@ TIMEOUT_SECONDS = 300  # 5 minutes
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Gestion du cycle de vie de l'application avec pré-chargement"""
-    logger.info("🚀 Démarrage de l'application...")
+    """Gestion du cycle de vie - VERSION CLOUD RUN"""
+    logger.info("🚀 Démarrage Cloud Run...")
     
-    # Pré-chargement des modèles au démarrage
     try:
-        logger.info("Initialisation des modèles ML...")
+        # Configuration pour CrewAI sur Cloud Run
+        os.environ.setdefault('CREW_STORAGE_DIR', '/tmp/crew')
+        os.environ.setdefault('HOME', '/tmp')
+        os.environ.setdefault('TMPDIR', '/tmp')
         
-        # Import et initialisation des modèles
-        from src.deep_learning_analyzer import MultiModelInterviewAnalyzer
+        # Création des répertoires nécessaires
+        os.makedirs('/tmp/crew', exist_ok=True)
+        os.makedirs('/tmp/transformers', exist_ok=True)
+        os.makedirs('/tmp/hf', exist_ok=True)
         
-        # Création d'une instance globale pour réutilisation
-        global model_analyzer
-        model_analyzer = MultiModelInterviewAnalyzer()
+        logger.info("Vérification des imports...")
+        import torch
+        import transformers
+        logger.info("✅ Dépendances ML disponibles")
         
-        if model_analyzer.models_loaded:
-            logger.info("✅ Tous les modèles ML pré-chargés avec succès")
-        else:
-            logger.warning("⚠️ Certains modèles ML n'ont pas pu être chargés")
-            
-        # Test des modèles avec des données factices
-        test_messages = [{"role": "user", "content": "Test de fonctionnement"}]
-        test_analysis = model_analyzer.run_full_analysis(test_messages, "test job requirements")
-        logger.info(f"✅ Test des modèles réussi: score = {test_analysis['overall_similarity_score']}")
+        # Test de CrewAI
+        try:
+            from crewai import Agent
+            logger.info("✅ CrewAI disponible")
+        except Exception as e:
+            logger.warning(f"⚠️ CrewAI warning: {e}")
         
     except Exception as e:
-        logger.error(f"❌ Erreur lors du pré-chargement des modèles : {e}")
-        # L'application peut continuer à fonctionner même sans tous les modèles
-        model_analyzer = None
+        logger.warning(f"⚠️ Avertissement au démarrage : {e}")
+        # Continue même en cas d'erreur non critique
     
-    # Stockage de l'instance dans l'application pour réutilisation
-    app.state.model_analyzer = model_analyzer
+    logger.info("✅ Application prête")
     
     yield
     
-    logger.info("🛑 Arrêt de l'application...")
-    
-    # Nettoyage si nécessaire
-    if hasattr(app.state, 'model_analyzer') and app.state.model_analyzer:
-        logger.info("Nettoyage des modèles...")
+    logger.info("🛑 Arrêt de l'application")
 
 app = FastAPI(
     title="API d'IA pour la RH",
@@ -209,5 +205,6 @@ async def simulate_interview_endpoint(request: InterviewRequest):
         raise HTTPException(status_code=500, detail=f"Erreur interne du serveur : {str(e)}")
 
 if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 8000))
+    # Cloud Run fournit PORT via variable d'environnement
+    port = int(os.environ.get("PORT", 8080))
     uvicorn.run(app, host="0.0.0.0", port=port)
