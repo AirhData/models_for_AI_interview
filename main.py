@@ -9,6 +9,7 @@ import logging
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
 from src.cv_parsing_agents import CvParserAgent
 from src.interview_simulator.entretient_version_prod import InterviewProcessor
 
@@ -33,32 +34,42 @@ def read_root() -> HealthCheck:
     return HealthCheck(status="ok")
 
 # --- Endpoint du parser de CV ---
-@app.post("/parse-cv/", tags=["CV Parsing"], summary="Analyser un CV au format PDF")
-async def parse_cv_endpoint(file: UploadFile = File(...)):
+app.post("/parse-cv/", 
+          response_model=ParsedCV, 
+          tags=["CV Parsing"], 
+          summary="Analyser un CV au format PDF")
+async def parse_cv_endpoint(file: UploadFile = File(..., description="Le fichier CV au format PDF à analyser.")):
+    """
+    Recevez un fichier PDF, sauvegardez-le temporairement, analysez-le pour en
+    extraire les informations pertinentes, puis retournez les données structurées.
+    """
     if file.content_type != "application/pdf":
+        logger.warning(f"Upload attempt with incorrect file type: {file.content_type}")
         raise HTTPException(status_code=400, detail="Le fichier doit être au format PDF.")
     
     tmp_path = None
     try:
         contents = await file.read()
-        
         with tempfile.NamedTemporaryFile(dir="/tmp", delete=False, suffix=".pdf") as tmp:
             tmp.write(contents)
             tmp.flush()
             tmp_path = tmp.name
             
-        logger.info(f"Début du parsing du CV temporaire : {tmp_path}")
+        logger.info(f"Fichier temporaire créé pour le CV : {tmp_path}")
         cv_agent = CvParserAgent(pdf_path=tmp_path)
-        parsed_data = await run_in_threadpool(cv_agent.process)
+        parsed_data_dict = await run_in_threadpool(cv_agent.process)
 
-        if not parsed_data:
+        if not parsed_data_dict:
+            logger.error("Le parsing du CV a échoué, aucune donnée n'a été retournée par l'agent.")
             raise HTTPException(status_code=500, detail="Échec du parsing du CV.")
         
-        logger.info("Parsing du CV réussi.")
+        parsed_data = ParsedCV(**parsed_data_dict)
+        
+        logger.info("Parsing du CV réussi et données validées.")
         return parsed_data
         
     except Exception as e:
-        logger.error(f"Erreur lors du parsing du CV : {e}", exc_info=True)
+        logger.error(f"Une erreur inattendue est survenue dans l'endpoint de parsing : {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Erreur interne du serveur : {e}")
         
     finally:
@@ -67,7 +78,7 @@ async def parse_cv_endpoint(file: UploadFile = File(...)):
                 os.remove(tmp_path)
                 logger.info(f"Fichier temporaire supprimé : {tmp_path}")
             except Exception as cleanup_error:
-                logger.warning(f"Erreur lors de la suppression du fichier temporaire : {cleanup_error}")
+                logger.warning(f"Avertissement : Erreur lors de la suppression du fichier temporaire {tmp_path}: {cleanup_error}")
 
 # --- Endpoint de simulation d'entretien ---
 @app.post("/simulate-interview/", tags=["Simulation d'Entretien"], summary="Gérer une conversation d'entretien")
