@@ -2,10 +2,12 @@ import os
 from dotenv import load_dotenv
 load_dotenv()
 from langchain_groq import ChatGroq
-from langchain_community.document_loaders import PyPDFLoader
+# Remove PyPDFLoader import and use pypdf directly
+import pypdf
 from langchain_openai import ChatOpenAI
 from typing import Dict, List, Any, Tuple, Optional, Type
 from crewai import LLM
+
 #########################################################################################################
 # formatage du json
 def format_cv(document):
@@ -39,12 +41,31 @@ def read_system_prompt(file_path):
         return file.read()
 
 def load_pdf(pdf_path):
-    loader = PyPDFLoader(pdf_path)
-    pages = loader.load_and_split()
-    cv_text = ""
-    for page in pages:
-        cv_text += page.page_content + "\n\n"
-    return cv_text    
+    """
+    Load and extract text from PDF using pypdf directly instead of LangChain's PyPDFLoader
+    to avoid tempfile permission issues in Cloud Run.
+    """
+    try:
+        cv_text = ""
+        with open(pdf_path, 'rb') as file:
+            pdf_reader = pypdf.PdfReader(file)
+            for page_num, page in enumerate(pdf_reader.pages):
+                try:
+                    page_text = page.extract_text()
+                    if page_text:
+                        cv_text += f"--- Page {page_num + 1} ---\n"
+                        cv_text += page_text + "\n\n"
+                except Exception as e:
+                    print(f"Erreur lors de l'extraction de la page {page_num + 1}: {e}")
+                    continue
+        
+        if not cv_text.strip():
+            raise ValueError("Aucun texte n'a pu être extrait du PDF")
+            
+        return cv_text
+    except Exception as e:
+        print(f"Erreur lors du chargement du PDF {pdf_path}: {e}")
+        raise
 
 #########################################################################################################        
 # modéles 
