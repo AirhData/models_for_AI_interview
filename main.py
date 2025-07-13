@@ -62,7 +62,7 @@ async def parse_cv_endpoint(file: UploadFile = File(...)):
     except Exception as e:
         # Cette partie est cruciale pour le débogage. Elle affichera la VRAIE erreur.
         print(f"Une erreur détaillée est survenue : {e}")
-        raise HTTPException(status_code=500, ors de la suppression du fichier temporaire : {cleanup_error}")
+        raise HTTPException(status_code=500, detail=f"Une erreur est survenue lors du parsing du CV : {e}")
 
 # --- Endpoint de simulation d'entretien ---
 @app.post("/simulate-interview/", tags=["Simulation d'Entretien"], summary="Gérer une conversation d'entretien")
