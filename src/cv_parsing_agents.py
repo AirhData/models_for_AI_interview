@@ -1,8 +1,8 @@
 import os
 import json
+import logging
 
-from src.crew.crew_pool import analyse_cv
-from src.config import load_pdf
+logger = logging.getLogger(__name__)
 
 def clean_dict_keys(data):
     if isinstance(data, dict):
@@ -18,68 +18,97 @@ class CvParserAgent:
 
     def process(self) -> dict:
         """
-        Traite le fichier PDF pour en extraire le contenu sous forme de JSON.
-        Ne se connecte à aucune base de données.
-        
-        Retourne :
-            Un dictionnaire contenant les données extraites du CV, ou None en cas d'erreur.
+        Version sécurisée pour Cloud Run
         """
-        print(f"Début du traitement du CV : {self.pdf_path}")
+        logger.info(f"Début du traitement du CV : {self.pdf_path}")
         
         try:
-            # Vérifier que le fichier existe
-            if not os.path.exists(self.pdf_path):
-                print(f"Erreur : Le fichier {self.pdf_path} n'existe pas.")
-                return None
-            
-            # Vérifier les permissions de lecture
-            if not os.access(self.pdf_path, os.R_OK):
-                print(f"Erreur : Pas de permission de lecture pour {self.pdf_path}")
-                return None
-            
-            print(f"Lecture du contenu PDF...")
+            # Import avec gestion d'erreur
+            from src.config import load_pdf
             cv_text_content = load_pdf(self.pdf_path)
+            logger.info(f"Contenu extrait : {len(cv_text_content)} caractères")
             
-            if not cv_text_content or not cv_text_content.strip():
-                print("Erreur : Aucun contenu textuel extrait du PDF.")
-                return None
-            
-            print(f"Contenu extrait : {len(cv_text_content)} caractères")
-            print(f"Lancement de l'analyse par le crew...")
-            
-            crew_output = analyse_cv(cv_text_content)
+            # Import sécurisé de crew_pool
+            try:
+                from src.crew.crew_pool import analyse_cv
+                logger.info("Lancement de l'analyse par le crew...")
+                crew_output = analyse_cv(cv_text_content)
+            except Exception as crew_error:
+                logger.error(f"Erreur de permission : {crew_error}")
+                # Fallback en cas d'erreur CrewAI
+                return self._create_fallback_response(cv_text_content)
 
-            if not crew_output or not hasattr(crew_output, 'raw') or not crew_output.raw.strip():
-                print("Erreur : L'analyse par le crew n'a pas retourné de résultat.")
-                return None
+            # Traitement du résultat
+            if not crew_output:
+                logger.warning("Crew n'a pas retourné de résultat")
+                return self._create_fallback_response(cv_text_content)
+            
+            # Si c'est déjà un dictionnaire (cas d'erreur géré)
+            if isinstance(crew_output, dict):
+                return clean_dict_keys(crew_output)
+            
+            # Si c'est un objet avec .raw
+            if hasattr(crew_output, 'raw') and crew_output.raw:
+                raw_string = crew_output.raw.strip()
                 
-            raw_string = crew_output.raw
-            print(f"Résultat brut du crew : {raw_string[:200]}...")
+                # Nettoyage du JSON si nécessaire
+                if '```' in raw_string:
+                    try:
+                        json_part = raw_string.split('```json')[1].split('```')[0]
+                        raw_string = json_part.strip()
+                    except:
+                        # Si le parsing échoue, utiliser tel quel
+                        pass
+                
+                try:
+                    profile_data = json.loads(raw_string)
+                    return clean_dict_keys(profile_data)
+                except json.JSONDecodeError as e:
+                    logger.error(f"Erreur JSON : {e}")
+                    logger.error(f"Raw data: {raw_string[:500]}...")
+                    return self._create_fallback_response(cv_text_content)
             
-            json_string_cleaned = raw_string
-            if '```' in raw_string:
-                json_part = raw_string.split('```json')[1].split('```')[0]
-                json_string_cleaned = json_part.strip()
-            
-            print(f"Parsing JSON...")
-            profile_data = json.loads(json_string_cleaned)
-            
-            result = clean_dict_keys(profile_data)
-            print(f"Traitement réussi, résultat : {list(result.keys()) if result else 'None'}")
-            return result
+            # Si aucun format reconnu
+            logger.warning("Format de sortie crew non reconnu")
+            return self._create_fallback_response(cv_text_content)
 
-        except json.JSONDecodeError as e:
-            print(f"Erreur de décodage JSON : {e}")
-            print(f"Données brutes reçues : {crew_output.raw if 'crew_output' in locals() else 'N/A'}")
-            return None
-        except FileNotFoundError as e:
-            print(f"Fichier non trouvé : {e}")
-            return None
-        except PermissionError as e:
-            print(f"Erreur de permission : {e}")
-            return None
         except Exception as e:
-            print(f"Une erreur inattendue est survenue dans CvParserAgent : {e}")
-            import traceback
-            traceback.print_exc()
-            return None
+            logger.error(f"Erreur critique dans CvParserAgent : {e}", exc_info=True)
+            return self._create_fallback_response("Erreur lors de la lecture du CV")
+
+    def _create_fallback_response(self, cv_content: str) -> dict:
+        """Crée une réponse de fallback en cas d'erreur"""
+        return {
+            "candidat": {
+                "informations_personnelles": {
+                    "nom": "Extraction automatique échouée",
+                    "email": "Non extrait",
+                    "numero_de_telephone": "Non extrait", 
+                    "localisation": "Non extrait"
+                },
+                "compétences": {
+                    "hard_skills": ["Analyse manuelle requise"],
+                    "soft_skills": []
+                },
+                "expériences": [{
+                    "Poste": "Analyse manuelle requise",
+                    "Entreprise": "Voir CV original",
+                    "start_date": "Non spécifié",
+                    "end_date": "Non spécifié",
+                    "responsabilités": ["Consulter le CV original"]
+                }],
+                "projets": {
+                    "professional": [],
+                    "personal": []
+                },
+                "formations": [{
+                    "degree": "Analyse manuelle requise",
+                    "institution": "Voir CV original",
+                    "start_date": "Non spécifié",
+                    "end_date": "Non spécifié"
+                }],
+                "raw_content_length": len(cv_content),
+                "status": "fallback_mode",
+                "message": "L'extraction automatique a échoué. Analyse manuelle recommandée."
+            }
+        }
