@@ -15,7 +15,6 @@ logger = logging.getLogger(__name__)
 from src.cv_parsing_agents import CvParserAgent
 from src.interview_simulator.entretient_version_prod import InterviewProcessor
 
-# Configuration pour Cloud Run
 MAX_FILE_SIZE = 10 * 1024 * 1024  # 10MB
 TIMEOUT_SECONDS = 300  # 5 minutes
 
@@ -25,36 +24,26 @@ async def lifespan(app: FastAPI):
     logger.info("🚀 Démarrage Cloud Run...")
     
     try:
-        # Configuration pour CrewAI sur Cloud Run
         os.environ.setdefault('CREW_STORAGE_DIR', '/tmp/crew')
         os.environ.setdefault('HOME', '/tmp')
         os.environ.setdefault('TMPDIR', '/tmp')
-        
-        # Création des répertoires nécessaires
         os.makedirs('/tmp/crew', exist_ok=True)
         os.makedirs('/tmp/transformers', exist_ok=True)
         os.makedirs('/tmp/hf', exist_ok=True)
-        
         logger.info("Vérification des imports...")
         import torch
         import transformers
         logger.info("✅ Dépendances ML disponibles")
-        
-        # Test de CrewAI
+
         try:
             from crewai import Agent
             logger.info("✅ CrewAI disponible")
         except Exception as e:
             logger.warning(f"⚠️ CrewAI warning: {e}")
-        
     except Exception as e:
         logger.warning(f"⚠️ Avertissement au démarrage : {e}")
-        # Continue même en cas d'erreur non critique
-    
     logger.info("✅ Application prête")
-    
     yield
-    
     logger.info("🛑 Arrêt de l'application")
 
 app = FastAPI(
@@ -82,11 +71,8 @@ def read_root() -> HealthCheck:
 def health_check():
     """Health check pour Cloud Run avec status des modèles"""
     try:
-        # Vérifications basiques
         import torch
         import transformers
-        
-        # Vérification des modèles pré-chargés
         models_status = {}
         if hasattr(app.state, 'model_analyzer') and app.state.model_analyzer:
             analyzer = app.state.model_analyzer
@@ -98,7 +84,6 @@ def health_check():
             }
         else:
             models_status = {"preloaded": False, "message": "Modèles non pré-chargés"}
-        
         return {
             "status": "healthy",
             "pytorch_available": True,
@@ -114,8 +99,6 @@ def health_check():
 @app.post("/parse-cv/", tags=["CV Parsing"], summary="Analyser un CV au format PDF")
 async def parse_cv_endpoint(file: UploadFile = File(...)):
     """Version sécurisée pour Cloud Run"""
-    
-    # Validation du fichier
     if file.content_type != "application/pdf":
         raise HTTPException(status_code=400, detail="Le fichier doit être au format PDF.")
     
@@ -124,23 +107,16 @@ async def parse_cv_endpoint(file: UploadFile = File(...)):
     
     temp_file = None
     try:
-        # Lecture du contenu
         contents = await file.read()
         if not contents:
             raise HTTPException(status_code=400, detail="Fichier vide.")
-        
-        # Création sécurisée du fichier temporaire
         with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf", prefix="cv_") as temp_file:
             temp_file.write(contents)
             temp_file.flush()
             temp_path = temp_file.name
         
         logger.info(f"Fichier temporaire créé : {temp_path}")
-        
-        # Traitement avec timeout
         cv_agent = CvParserAgent(pdf_path=temp_path)
-        
-        # Utilisation d'asyncio.wait_for pour le timeout
         parsed_data = await asyncio.wait_for(
             run_in_threadpool(cv_agent.process),
             timeout=TIMEOUT_SECONDS
@@ -159,7 +135,6 @@ async def parse_cv_endpoint(file: UploadFile = File(...)):
         logger.error(f"Erreur lors du parsing du CV : {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Erreur interne du serveur : {str(e)}")
     finally:
-        # Nettoyage garanti du fichier temporaire
         if temp_file and hasattr(temp_file, 'name') and os.path.exists(temp_file.name):
             try:
                 os.unlink(temp_file.name)
@@ -178,8 +153,6 @@ async def simulate_interview_endpoint(request: InterviewRequest):
         )
         
         logger.info("Lancement de la simulation dans un threadpool.")
-        
-        # Ajout d'un timeout pour éviter les blocages
         ai_response_object = await asyncio.wait_for(
             run_in_threadpool(processor.run, messages=request.messages),
             timeout=TIMEOUT_SECONDS
@@ -205,6 +178,5 @@ async def simulate_interview_endpoint(request: InterviewRequest):
         raise HTTPException(status_code=500, detail=f"Erreur interne du serveur : {str(e)}")
 
 if __name__ == "__main__":
-    # Cloud Run fournit PORT via variable d'environnement
     port = int(os.environ.get("PORT", 8080))
     uvicorn.run(app, host="0.0.0.0", port=port)
