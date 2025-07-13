@@ -33,36 +33,34 @@ def read_root() -> HealthCheck:
     return HealthCheck(status="ok")
 
 # --- Endpoint du parser de CV ---
-@app.post("/parse-cv/")
+@app.post("/parse-cv/", tags=["CV Parsing"], summary="Analyser un CV au format PDF")
 async def parse_cv_endpoint(file: UploadFile = File(...)):
-    # Utiliser un bloc "with" garantit que le fichier temporaire est bien supprimé après usage
+    if file.content_type != "application/pdf":
+        raise HTTPException(status_code=400, detail="Le fichier doit être au format PDF.")
+    tmp_path = None  
     try:
-        with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as temp_file:
-            # Écrire le contenu du fichier uploadé dans le fichier temporaire
-            content = await file.read()
-            temp_file.write(content)
-            
-            # Récupérer le chemin du fichier temporaire
-            temp_file_path = temp_file.name
-
-        print(f"Fichier temporaire créé à l'adresse : {temp_file_path}") # Log pour le débogage
-
-        # Instancier l'agent AVEC le bon chemin
-        cv_parser = CvParserAgent(file_path=temp_file_path) # C'EST LA LIGNE LA PLUS IMPORTANTE
-        
-        # Lancer le parsing
-        parsed_data = cv_parser.parse() # Assurez-vous que la méthode s'appelle bien "parse"
-
-        # Vérifier si le parsing a réussi
+        contents = await file.read()
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
+            tmp.write(contents)
+            tmp.flush()
+            tmp_path = tmp.name
+        logger.info(f"Début du parsing du CV temporaire : {tmp_path}")
+        cv_agent = CvParserAgent(pdf_path=tmp_path)
+        parsed_data = await run_in_threadpool(cv_agent.process)
         if not parsed_data:
-            raise HTTPException(status_code=500, detail="Le parsing du CV n'a retourné aucune donnée.")
-
+            raise HTTPException(status_code=500, detail="Échec du parsing du CV.")
+        logger.info("Parsing du CV réussi.")
         return parsed_data
-
     except Exception as e:
-        # Cette partie est cruciale pour le débogage. Elle affichera la VRAIE erreur.
-        print(f"Une erreur détaillée est survenue : {e}")
-        raise HTTPException(status_code=500, detail=f"Une erreur est survenue lors du parsing du CV : {e}")
+        logger.error(f"Erreur lors du parsing du CV : {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Erreur interne du serveur : {e}")
+    finally:
+        if tmp_path and os.path.exists(tmp_path):
+            try:
+                os.remove(tmp_path)
+                logger.info(f"Fichier temporaire supprimé : {tmp_path}")
+            except Exception as cleanup_error:
+                logger.warning(f"Erreur lors de la suppression du fichier temporaire : {cleanup_error}")
 
 # --- Endpoint de simulation d'entretien ---
 @app.post("/simulate-interview/", tags=["Simulation d'Entretien"], summary="Gérer une conversation d'entretien")
@@ -91,3 +89,4 @@ async def simulate_interview_endpoint(request: InterviewRequest):
 
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=8000)
+
