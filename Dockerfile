@@ -15,32 +15,35 @@ RUN uv pip install --system --no-cache -r requirements.txt
 
 FROM python:3.11-slim
 
-RUN addgroup app && adduser --ingroup app --disabled-password --gecos "" app
+# Créer l'utilisateur app avec un répertoire home
+RUN useradd -m -s /bin/bash app
 
 WORKDIR /app
 
 COPY --from=builder /usr/local/lib/python3.11/site-packages /usr/local/lib/python3.11/site-packages
 COPY --from=builder /usr/local/bin /usr/local/bin
 
-# Pré-télécharger les modèles avant de changer d'utilisateur
+# Pré-télécharger les modèles en tant que root
 ENV HOME=/root
 RUN python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('all-MiniLM-L6-v2')" && \
     python -c "from transformers import pipeline; pipeline('text-classification', model='astrosbd/french_emotion_camembert', return_all_scores=True)" && \
     python -c "from transformers import pipeline; pipeline('zero-shot-classification', model='joeddav/xlm-roberta-large-xnli')"
 
-# Copier les modèles téléchargés vers le répertoire de l'utilisateur app
-RUN mkdir -p /home/app/.cache && \
-    cp -r /root/.cache/* /home/app/.cache/ 2>/dev/null || true && \
+# Copier les modèles vers le répertoire de l'utilisateur app
+RUN cp -r /root/.cache /home/app/ 2>/dev/null || true && \
     chown -R app:app /home/app
 
 COPY . .
 
-RUN mkdir uploads && chown -R app:app uploads
+RUN mkdir uploads && chown -R app:app uploads && chown -R app:app /app
 
 USER app
 
-# Définir explicitement HOME pour l'utilisateur app
-ENV HOME=/home/app
+# Variables d'environnement importantes
+ENV HOME=/home/app \
+    HF_HOME=/home/app/.cache/huggingface \
+    TRANSFORMERS_CACHE=/home/app/.cache/huggingface/transformers \
+    SENTENCE_TRANSFORMERS_HOME=/home/app/.cache/torch/sentence_transformers
 
 EXPOSE 8000
 
