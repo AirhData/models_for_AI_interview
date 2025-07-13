@@ -37,23 +37,30 @@ def read_root() -> HealthCheck:
 async def parse_cv_endpoint(file: UploadFile = File(...)):
     if file.content_type != "application/pdf":
         raise HTTPException(status_code=400, detail="Le fichier doit être au format PDF.")
-    tmp_path = None  
+    
+    tmp_path = None
     try:
         contents = await file.read()
-        with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
+        
+        with tempfile.NamedTemporaryFile(dir="/tmp", delete=False, suffix=".pdf") as tmp:
             tmp.write(contents)
             tmp.flush()
             tmp_path = tmp.name
+            
         logger.info(f"Début du parsing du CV temporaire : {tmp_path}")
         cv_agent = CvParserAgent(pdf_path=tmp_path)
         parsed_data = await run_in_threadpool(cv_agent.process)
+
         if not parsed_data:
             raise HTTPException(status_code=500, detail="Échec du parsing du CV.")
+        
         logger.info("Parsing du CV réussi.")
         return parsed_data
+        
     except Exception as e:
         logger.error(f"Erreur lors du parsing du CV : {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Erreur interne du serveur : {e}")
+        
     finally:
         if tmp_path and os.path.exists(tmp_path):
             try:
