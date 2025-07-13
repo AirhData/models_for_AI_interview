@@ -1,12 +1,44 @@
 import os
 from dotenv import load_dotenv
+
+# Configuration pour Cloud Run
+def setup_cloud_run_env():
+    """Configure l'environnement pour Cloud Run"""
+    
+    # Configuration des répertoires temporaires
+    temp_dirs = ['/tmp/crew', '/tmp/transformers', '/tmp/hf', '/tmp/cache']
+    
+    for temp_dir in temp_dirs:
+        try:
+            os.makedirs(temp_dir, exist_ok=True)
+            os.chmod(temp_dir, 0o777)  # Permissions complètes
+        except Exception as e:
+            print(f"Warning: Could not create {temp_dir}: {e}")
+    
+    # Variables d'environnement pour CrewAI
+    os.environ.setdefault('CREW_STORAGE_DIR', '/tmp/crew')
+    os.environ.setdefault('HOME', '/tmp')
+    os.environ.setdefault('TMPDIR', '/tmp')
+    
+    # Variables pour les modèles ML
+    os.environ.setdefault('TRANSFORMERS_CACHE', '/tmp/transformers')
+    os.environ.setdefault('HF_HOME', '/tmp/hf')
+    os.environ.setdefault('SENTENCE_TRANSFORMERS_HOME', '/tmp/transformers')
+    
+    # Désactiver les barres de progression
+    os.environ.setdefault('HF_HUB_DISABLE_PROGRESS_BARS', '1')
+    os.environ.setdefault('TOKENIZERS_PARALLELISM', 'false')
+
+# Appeler la configuration au début
+setup_cloud_run_env()
+
+# Charger les variables d'environnement
 load_dotenv()
+
 from langchain_groq import ChatGroq
-# Remove PyPDFLoader import and use pypdf directly
-import pypdf
+from langchain_community.document_loaders import PyPDFLoader
 from langchain_openai import ChatOpenAI
 from typing import Dict, List, Any, Tuple, Optional, Type
-from crewai import LLM
 
 #########################################################################################################
 # formatage du json
@@ -41,55 +73,41 @@ def read_system_prompt(file_path):
         return file.read()
 
 def load_pdf(pdf_path):
-    """
-    Load and extract text from PDF using pypdf directly instead of LangChain's PyPDFLoader
-    to avoid tempfile permission issues in Cloud Run.
-    """
-    try:
-        cv_text = ""
-        with open(pdf_path, 'rb') as file:
-            pdf_reader = pypdf.PdfReader(file)
-            for page_num, page in enumerate(pdf_reader.pages):
-                try:
-                    page_text = page.extract_text()
-                    if page_text:
-                        cv_text += f"--- Page {page_num + 1} ---\n"
-                        cv_text += page_text + "\n\n"
-                except Exception as e:
-                    print(f"Erreur lors de l'extraction de la page {page_num + 1}: {e}")
-                    continue
-        
-        if not cv_text.strip():
-            raise ValueError("Aucun texte n'a pu être extrait du PDF")
-            
-        return cv_text
-    except Exception as e:
-        print(f"Erreur lors du chargement du PDF {pdf_path}: {e}")
-        raise
+    loader = PyPDFLoader(pdf_path)
+    pages = loader.load_and_split()
+    cv_text = ""
+    for page in pages:
+        cv_text += page.page_content + "\n\n"
+    return cv_text    
 
 #########################################################################################################        
 # modéles 
-
-"""GEMINI_API_KEY = os.getenv("GOOGLE_API_KEY")
-model_google = "gemini/gemma-3-27b-it"
-def chat_gemini():
-    llm = ChatGoogleGenerativeAI("gemini/gemma-3-27b-it")"""
 
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 model_openai = "gpt-4o"  
 
 def crew_openai():
-    llm = ChatOpenAI(
-        model="gpt-4o-mini",
-        temperature=0.1,
-        api_key=OPENAI_API_KEY
-    )
-    return llm
+    """Configuration CrewAI pour Cloud Run"""
+    try:
+        llm = ChatOpenAI(
+            model="gpt-4o-mini",
+            temperature=0.1,
+            api_key=OPENAI_API_KEY
+        )
+        return llm
+    except Exception as e:
+        print(f"Error initializing CrewAI OpenAI: {e}")
+        raise
 
 def chat_openai():
-    llm = ChatOpenAI(
-        model="gpt-4o",
-        temperature=0.6,
-        api_key=OPENAI_API_KEY
-    )
-    return llm
+    """Configuration Chat OpenAI pour Cloud Run"""
+    try:
+        llm = ChatOpenAI(
+            model="gpt-4o",
+            temperature=0.6,
+            api_key=OPENAI_API_KEY
+        )
+        return llm
+    except Exception as e:
+        print(f"Error initializing Chat OpenAI: {e}")
+        raise
