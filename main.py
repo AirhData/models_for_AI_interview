@@ -21,19 +21,45 @@ TIMEOUT_SECONDS = 300  # 5 minutes
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Gestion du cycle de vie de l'application"""
-    logger.info("Démarrage de l'application...")
+    """Gestion du cycle de vie de l'application avec pré-chargement"""
+    logger.info("🚀 Démarrage de l'application...")
     
-    # Pré-chargement des modèles (optionnel)
+    # Pré-chargement des modèles au démarrage
     try:
-        # Ici vous pourriez pré-charger vos modèles
-        logger.info("Modèles pré-chargés avec succès")
+        logger.info("Initialisation des modèles ML...")
+        
+        # Import et initialisation des modèles
+        from src.deep_learning_analyzer import MultiModelInterviewAnalyzer
+        
+        # Création d'une instance globale pour réutilisation
+        global model_analyzer
+        model_analyzer = MultiModelInterviewAnalyzer()
+        
+        if model_analyzer.models_loaded:
+            logger.info("✅ Tous les modèles ML pré-chargés avec succès")
+        else:
+            logger.warning("⚠️ Certains modèles ML n'ont pas pu être chargés")
+            
+        # Test des modèles avec des données factices
+        test_messages = [{"role": "user", "content": "Test de fonctionnement"}]
+        test_analysis = model_analyzer.run_full_analysis(test_messages, "test job requirements")
+        logger.info(f"✅ Test des modèles réussi: score = {test_analysis['overall_similarity_score']}")
+        
     except Exception as e:
-        logger.warning(f"Échec du pré-chargement des modèles : {e}")
+        logger.error(f"❌ Erreur lors du pré-chargement des modèles : {e}")
+        # L'application peut continuer à fonctionner même sans tous les modèles
+        model_analyzer = None
+    
+    # Stockage de l'instance dans l'application pour réutilisation
+    app.state.model_analyzer = model_analyzer
     
     yield
     
-    logger.info("Arrêt de l'application...")
+    logger.info("🛑 Arrêt de l'application...")
+    
+    # Nettoyage si nécessaire
+    if hasattr(app.state, 'model_analyzer') and app.state.model_analyzer:
+        logger.info("Nettoyage des modèles...")
 
 app = FastAPI(
     title="API d'IA pour la RH",
@@ -58,16 +84,32 @@ def read_root() -> HealthCheck:
 
 @app.get("/health", tags=["Status"], summary="Health check détaillé")
 def health_check():
-    """Health check pour Cloud Run"""
+    """Health check pour Cloud Run avec status des modèles"""
     try:
         # Vérifications basiques
         import torch
         import transformers
+        
+        # Vérification des modèles pré-chargés
+        models_status = {}
+        if hasattr(app.state, 'model_analyzer') and app.state.model_analyzer:
+            analyzer = app.state.model_analyzer
+            models_status = {
+                "sentiment_available": analyzer.sentiment_analyzer is not None,
+                "similarity_available": analyzer.similarity_model is not None,
+                "intent_available": analyzer.intent_classifier is not None,
+                "models_loaded": analyzer.models_loaded
+            }
+        else:
+            models_status = {"preloaded": False, "message": "Modèles non pré-chargés"}
+        
         return {
             "status": "healthy",
             "pytorch_available": True,
             "transformers_available": True,
-            "cuda_available": torch.cuda.is_available()
+            "cuda_available": torch.cuda.is_available(),
+            "models_status": models_status,
+            "cache_dir": os.environ.get('TRANSFORMERS_CACHE', 'default')
         }
     except Exception as e:
         logger.error(f"Health check failed: {e}")
