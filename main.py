@@ -1,15 +1,14 @@
 import tempfile
+import os
 from fastapi import FastAPI, UploadFile, File, HTTPException
 from fastapi.concurrency import run_in_threadpool
 from pydantic import BaseModel, Field
 from typing import List, Dict, Any
 import uvicorn
-import os
 import logging
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
-
 from src.cv_parsing_agents import CvParserAgent
 from src.interview_simulator.entretient_version_prod import InterviewProcessor
 
@@ -18,6 +17,7 @@ app = FastAPI(
     description="Une API pour le parsing de CV et la simulation d'entretiens.",
     version="1.0.0"
 )
+
 class InterviewRequest(BaseModel):
     cv_document: Dict[str, Any] = Field(..., example={"candidat": {"nom": "John Doe", "compétences": {"hard_skills": ["Python", "FastAPI"]}}})
     job_offer: Dict[str, Any] = Field(..., example={"poste": "Développeur Python", "description": "Recherche développeur expérimenté..."})
@@ -34,51 +34,46 @@ def read_root() -> HealthCheck:
     return HealthCheck(status="ok")
 
 # --- Endpoint du parser de CV ---
-app.post("/parse-cv/", 
-          response_model=ParsedCV, 
-          tags=["CV Parsing"], 
-          summary="Analyser un CV au format PDF")
-async def parse_cv_endpoint(file: UploadFile = File(..., description="Le fichier CV au format PDF à analyser.")):
-    """
-    Recevez un fichier PDF, sauvegardez-le temporairement, analysez-le pour en
-    extraire les informations pertinentes, puis retournez les données structurées.
-    """
+@app.post("/parse-cv/", tags=["CV Parsing"], summary="Analyser un CV au format PDF")
+async def parse_cv_endpoint(file: UploadFile = File(...)):
     if file.content_type != "application/pdf":
-        logger.warning(f"Upload attempt with incorrect file type: {file.content_type}")
         raise HTTPException(status_code=400, detail="Le fichier doit être au format PDF.")
     
-    tmp_path = None
+    tmp_path = None  
     try:
         contents = await file.read()
-        with tempfile.NamedTemporaryFile(dir="/tmp", delete=False, suffix=".pdf") as tmp:
-            tmp.write(contents)
-            tmp.flush()
-            tmp_path = tmp.name
-            
-        logger.info(f"Fichier temporaire créé pour le CV : {tmp_path}")
+        
+        # Use /tmp directory explicitly for Cloud Run compatibility
+        # Create a unique filename in the /tmp directory
+        import uuid
+        unique_filename = f"cv_{uuid.uuid4().hex}.pdf"
+        tmp_path = os.path.join("/tmp", unique_filename)
+        
+        # Write the file directly to /tmp
+        with open(tmp_path, "wb") as tmp_file:
+            tmp_file.write(contents)
+        
+        logger.info(f"Début du parsing du CV temporaire : {tmp_path}")
         cv_agent = CvParserAgent(pdf_path=tmp_path)
-        parsed_data_dict = await run_in_threadpool(cv_agent.process)
-
-        if not parsed_data_dict:
-            logger.error("Le parsing du CV a échoué, aucune donnée n'a été retournée par l'agent.")
+        parsed_data = await run_in_threadpool(cv_agent.process)
+        
+        if not parsed_data:
             raise HTTPException(status_code=500, detail="Échec du parsing du CV.")
         
-        parsed_data = ParsedCV(**parsed_data_dict)
-        
-        logger.info("Parsing du CV réussi et données validées.")
+        logger.info("Parsing du CV réussi.")
         return parsed_data
         
     except Exception as e:
-        logger.error(f"Une erreur inattendue est survenue dans l'endpoint de parsing : {e}", exc_info=True)
+        logger.error(f"Erreur lors du parsing du CV : {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Erreur interne du serveur : {e}")
-        
     finally:
+        # Clean up the temporary file
         if tmp_path and os.path.exists(tmp_path):
             try:
                 os.remove(tmp_path)
                 logger.info(f"Fichier temporaire supprimé : {tmp_path}")
             except Exception as cleanup_error:
-                logger.warning(f"Avertissement : Erreur lors de la suppression du fichier temporaire {tmp_path}: {cleanup_error}")
+                logger.warning(f"Erreur lors de la suppression du fichier temporaire : {cleanup_error}")
 
 # --- Endpoint de simulation d'entretien ---
 @app.post("/simulate-interview/", tags=["Simulation d'Entretien"], summary="Gérer une conversation d'entretien")
@@ -107,4 +102,3 @@ async def simulate_interview_endpoint(request: InterviewRequest):
 
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=8000)
-
